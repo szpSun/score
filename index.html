@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>班级名单管理</title>
+<title>班级名单与成绩</title>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   * { box-sizing: border-box; }
@@ -11,7 +11,7 @@
     margin: 0; font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
     background: #f3f5f9; color: #333;
   }
-  .container { max-width: 960px; margin: 30px auto; padding: 0 16px; }
+  .container { max-width: 1200px; margin: 30px auto; padding: 0 16px; }
   h1 { font-size: 24px; margin: 0 0 20px; }
   .card {
     background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 16px;
@@ -49,6 +49,14 @@
   .ops { white-space: nowrap; }
   .ops button { margin-right: 4px; }
   .toolbar { justify-content: space-between; margin-bottom: 12px; }
+  th small { font-weight: normal; color: #999; }
+  td input.score {
+    width: 70px; padding: 5px 6px; border: 1px solid #ccd; border-radius: 6px;
+    font-size: 14px; text-align: center;
+  }
+  td input.score:focus { outline: none; border-color: #4a7cf7; }
+  td input.score.invalid { border-color: #e5534b; background: #fff3f2; }
+  td.total { font-weight: 600; color: #4a7cf7; }
 </style>
 </head>
 <body>
@@ -93,10 +101,19 @@
     </div>
     <table>
       <thead>
-        <tr><th style="width:60px">序号</th><th>姓名</th><th style="width:100px">性别</th><th>年级</th><th style="width:150px">操作</th></tr>
+        <tr>
+          <th style="width:60px">序号</th><th>姓名</th><th style="width:90px">性别</th><th>年级</th>
+          <th>技能 <small>50%</small></th><th>乐跑 <small>20%</small></th>
+          <th>50m <small>20%</small></th><th>平时 <small>10%</small></th>
+          <th style="width:80px">总分</th><th style="width:140px">操作</th>
+        </tr>
       </thead>
       <tbody id="tbody"></tbody>
     </table>
+    <div class="tip">
+      各项分数按 0–100 分手动填写，输入后自动保存；按回车跳到下一位同学的同一项。<br>
+      总分 = 技能 × 50% + 乐跑 × 20% + 50m × 20% + 平时 × 10%（未填的项按 0 分计算）。
+    </div>
   </div>
 </div>
 
@@ -120,13 +137,44 @@ function normalizeGender(g) {
   return g;
 }
 
+const SCORE_ITEMS = [
+  { key: 'skill', label: '技能', weight: 0.5 },
+  { key: 'run',   label: '乐跑', weight: 0.2 },
+  { key: 'm50',   label: '50m',  weight: 0.2 },
+  { key: 'daily', label: '平时', weight: 0.1 },
+];
+
+function calcTotal(s) {
+  const sc = s.scores || {};
+  if (!SCORE_ITEMS.some(it => sc[it.key] !== undefined)) return null;
+  const sum = SCORE_ITEMS.reduce((acc, it) => acc + (Number(sc[it.key]) || 0) * it.weight, 0);
+  return Math.round(sum * 100) / 100;
+}
+
+const fmtTotal = t => t === null ? '-' : String(t);
+
+function scoreCells(s) {
+  const sc = s.scores || {};
+  return SCORE_ITEMS.map(it =>
+    `<td><input class="score" type="number" min="0" max="100" step="0.5" data-key="${it.key}" value="${sc[it.key] ?? ''}"></td>`
+  ).join('') + `<td class="total">${fmtTotal(calcTotal(s))}</td>`;
+}
+
+function updateStats() {
+  const male = students.filter(s => s.gender === '男').length;
+  const female = students.filter(s => s.gender === '女').length;
+  const totals = students.map(calcTotal).filter(t => t !== null);
+  const avg = totals.length ? (totals.reduce((a, b) => a + b, 0) / totals.length).toFixed(2) : '-';
+  $('stats').innerHTML = `共 <b>${students.length}</b> 人，男 <b>${male}</b> 人，女 <b>${female}</b> 人，已录分 <b>${totals.length}</b> 人，平均总分 <b>${avg}</b>`;
+}
+
 function render() {
   const kw = $('search').value.trim();
   const list = students.filter(s => !kw || s.name.includes(kw) || s.grade.includes(kw));
   const tbody = $('tbody');
 
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty">${students.length ? '没有匹配的学生' : '暂无学生，请导入或手动添加'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="empty">${students.length ? '没有匹配的学生' : '暂无学生，请导入或手动添加'}</td></tr>`;
   } else {
     tbody.innerHTML = list.map((s, i) => {
       if (s.id === editingId) {
@@ -138,6 +186,7 @@ function render() {
             <option ${s.gender === '女' ? 'selected' : ''}>女</option>
           </select></td>
           <td><input type="text" class="e-grade" value="${esc(s.grade)}"></td>
+          ${scoreCells(s)}
           <td class="ops">
             <button class="small green" data-act="save">保存</button>
             <button class="small gray" data-act="cancel">取消</button>
@@ -149,6 +198,7 @@ function render() {
         <td>${esc(s.name)}</td>
         <td>${esc(s.gender)}</td>
         <td>${esc(s.grade)}</td>
+        ${scoreCells(s)}
         <td class="ops">
           <button class="small" data-act="edit">编辑</button>
           <button class="small red" data-act="del">删除</button>
@@ -157,9 +207,7 @@ function render() {
     }).join('');
   }
 
-  const male = students.filter(s => s.gender === '男').length;
-  const female = students.filter(s => s.gender === '女').length;
-  $('stats').innerHTML = `共 <b>${students.length}</b> 人，男 <b>${male}</b> 人，女 <b>${female}</b> 人`;
+  updateStats();
 }
 
 // ---------- 手动添加 ----------
@@ -217,6 +265,40 @@ $('tbody').addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.matches('.e-name, .e-grade')) {
     e.target.closest('tr').querySelector('[data-act=save]').click();
   }
+  if (e.key === 'Enter' && e.target.matches('input.score')) {
+    e.preventDefault();
+    const key = e.target.dataset.key;
+    const next = e.target.closest('tr').nextElementSibling;
+    const nextInput = next && next.querySelector(`input.score[data-key="${key}"]`);
+    if (nextInput) { nextInput.focus(); nextInput.select(); }
+  }
+});
+
+// ---------- 分数录入 ----------
+$('tbody').addEventListener('input', e => {
+  const input = e.target;
+  if (!input.matches('input.score')) return;
+  const tr = input.closest('tr');
+  const s = students.find(x => x.id === tr.dataset.id);
+  if (!s) return;
+  s.scores = s.scores || {};
+
+  const raw = input.value.trim();
+  const num = Number(raw);
+  if (raw === '') {
+    delete s.scores[input.dataset.key];
+    input.classList.remove('invalid');
+  } else if (isNaN(num) || num < 0 || num > 100) {
+    input.classList.add('invalid');
+    return;
+  } else {
+    s.scores[input.dataset.key] = num;
+    input.classList.remove('invalid');
+  }
+
+  save();
+  tr.querySelector('.total').textContent = fmtTotal(calcTotal(s));
+  updateStats();
 });
 
 $('search').addEventListener('input', render);
@@ -301,7 +383,7 @@ drop.addEventListener('drop', e => {
 // ---------- 导出 ----------
 function downloadSheet(aoa, filename) {
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{ wch: 8 }, { wch: 14 }, { wch: 8 }, { wch: 14 }];
+  ws['!cols'] = [{ wch: 8 }, { wch: 14 }, { wch: 8 }, { wch: 14 }, ...SCORE_ITEMS.map(() => ({ wch: 10 })), { wch: 10 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '名单');
   XLSX.writeFile(wb, filename);
@@ -309,10 +391,13 @@ function downloadSheet(aoa, filename) {
 
 $('btnExport').onclick = () => {
   if (!students.length) { alert('名单为空'); return; }
-  downloadSheet(
-    [['序号', '姓名', '性别', '年级'], ...students.map((s, i) => [i + 1, s.name, s.gender, s.grade])],
-    '班级名单.xlsx'
-  );
+  const header = ['序号', '姓名', '性别', '年级', ...SCORE_ITEMS.map(it => `${it.label}(${it.weight * 100}%)`), '总分'];
+  const rows = students.map((s, i) => {
+    const sc = s.scores || {};
+    const total = calcTotal(s);
+    return [i + 1, s.name, s.gender, s.grade, ...SCORE_ITEMS.map(it => sc[it.key] ?? ''), total ?? ''];
+  });
+  downloadSheet([header, ...rows], '班级名单.xlsx');
 };
 
 $('btnTemplate').onclick = () => {
