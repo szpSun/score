@@ -375,7 +375,7 @@ function updateStats() {
   const high = students.filter(isHigh).length;
   const avg = totals.length ? (totals.reduce((a, b) => a + b, 0) / totals.length).toFixed(2) : '-';
   $('stats').innerHTML = `共 <b>${students.length}</b> 人，男 <b>${male}</b> 人，女 <b>${female}</b> 人，已录分 <b>${totals.length}</b> 人，`
-    + `${HIGH_SCORE} 分以上 <b class="hi">${high}</b> 人，平均总分 <b>${avg}</b>`;
+    + `${HIGH_SCORE} 分以上 <b class="hi">${high}</b> 人（占比 <b class="hi">${totals.length ? (high / totals.length * 100).toFixed(1) + '%' : '-'}</b>），平均总分 <b>${avg}</b>`;
   renderDistribution(totals);
 }
 
