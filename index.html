@@ -66,6 +66,17 @@
   td input.score:focus { outline: none; border-color: #4a7cf7; }
   td input.score.invalid { border-color: #e5534b; background: #fff3f2; }
   td.total { font-weight: 600; color: #4a7cf7; }
+  tr.high td, tr.high:hover td { background: #fff7c2; }
+  .stats b.hi { color: #c98a00; }
+  .filter-high { font-size: 14px; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .dist-bars { margin-top: 14px; }
+  .dist-row { display: flex; align-items: center; gap: 10px; margin: 5px 0; font-size: 13px; }
+  .dist-label { width: 90px; text-align: right; color: #555; flex-shrink: 0; }
+  .dist-track { flex: 1; background: #f0f2f7; border-radius: 4px; height: 20px; overflow: hidden; }
+  .dist-bar { height: 100%; background: #4a7cf7; border-radius: 4px; transition: width .2s; }
+  .dist-bar.high { background: #f0b400; }
+  .dist-count { width: 110px; color: #555; flex-shrink: 0; }
+  input.step-input { width: 80px; }
 </style>
 </head>
 <body>
@@ -107,8 +118,28 @@
 
   <div class="card">
     <div class="row toolbar">
+      <h2 style="margin:0">成绩分布</h2>
+      <div class="row">
+        <span style="font-size:14px">分数间隔：</span>
+        <select id="stepSelect">
+          <option value="3">3 分</option>
+          <option value="5">5 分</option>
+          <option value="10" selected>10 分</option>
+          <option value="custom">自定义</option>
+        </select>
+        <input type="text" id="stepCustom" class="step-input" placeholder="如 2.5" hidden>
+      </div>
+    </div>
+    <div class="stats" id="distSummary"></div>
+    <div class="dist-bars" id="distBars"></div>
+    <div class="tip">每组含下限、不含上限（如 80–90 表示 80 ≤ 总分 &lt; 90），100 分计入最后一组；只统计已有总分的学生。</div>
+  </div>
+
+  <div class="card">
+    <div class="row toolbar">
       <div class="stats" id="stats"></div>
       <div class="row">
+        <label class="filter-high"><input type="checkbox" id="onlyHigh"> 只看 90 分以上</label>
         <input type="text" id="search" placeholder="搜索姓名 / 年级">
         <button class="green" id="btnExport">导出 Excel</button>
         <button class="red" id="btnClear">清空</button>
@@ -323,19 +354,83 @@ function refreshRowScores(tr, s) {
   }
 
   tr.querySelector('td.total').textContent = fmtScore(calcTotal(s));
+  tr.classList.toggle('high', isHigh(s));
 }
+
+const HIGH_SCORE = 90;
+const isHigh = s => { const t = calcTotal(s); return t !== null && t >= HIGH_SCORE; };
 
 function updateStats() {
   const male = students.filter(s => s.gender === '男').length;
   const female = students.filter(s => s.gender === '女').length;
   const totals = students.map(calcTotal).filter(t => t !== null);
+  const high = students.filter(isHigh).length;
   const avg = totals.length ? (totals.reduce((a, b) => a + b, 0) / totals.length).toFixed(2) : '-';
-  $('stats').innerHTML = `共 <b>${students.length}</b> 人，男 <b>${male}</b> 人，女 <b>${female}</b> 人，已录分 <b>${totals.length}</b> 人，平均总分 <b>${avg}</b>`;
+  $('stats').innerHTML = `共 <b>${students.length}</b> 人，男 <b>${male}</b> 人，女 <b>${female}</b> 人，已录分 <b>${totals.length}</b> 人，`
+    + `${HIGH_SCORE} 分以上 <b class="hi">${high}</b> 人，平均总分 <b>${avg}</b>`;
+  renderDistribution(totals);
 }
+
+function getStep() {
+  const v = $('stepSelect').value;
+  if (v !== 'custom') return Number(v);
+  const n = Number($('stepCustom').value);
+  return n > 0 && n <= 100 ? n : null;
+}
+
+const fmtNum = n => String(round2(n));
+
+function renderDistribution(totals) {
+  const step = getStep();
+  if (!step) {
+    $('distSummary').innerHTML = '请输入 0~100 之间的间隔';
+    $('distBars').innerHTML = '';
+    return;
+  }
+  if (!totals.length) {
+    $('distSummary').innerHTML = '暂无学生有总分';
+    $('distBars').innerHTML = '';
+    return;
+  }
+
+  const n = Math.ceil(100 / step - 1e-9);
+  const counts = new Array(n).fill(0);
+  totals.forEach(t => counts[Math.min(Math.floor(t / step + 1e-9), n - 1)]++);
+
+  const first = counts.findIndex(c => c > 0);
+  const max = Math.max(...counts);
+  const high = totals.filter(t => t >= HIGH_SCORE).length;
+  const pct = c => (c / totals.length * 100).toFixed(1) + '%';
+
+  $('distSummary').innerHTML = `已录分 <b>${totals.length}</b> 人，最高 <b>${fmtNum(Math.max(...totals))}</b>，最低 <b>${fmtNum(Math.min(...totals))}</b>，`
+    + `${HIGH_SCORE} 分以上 <b class="hi">${high}</b> 人（${pct(high)}）`;
+
+  let html = '';
+  for (let i = n - 1; i >= first; i--) {
+    const lo = i * step;
+    const hi = Math.min((i + 1) * step, 100);
+    const c = counts[i];
+    html += `<div class="dist-row">
+      <div class="dist-label">${fmtNum(lo)}–${fmtNum(hi)}</div>
+      <div class="dist-track"><div class="dist-bar ${lo >= HIGH_SCORE ? 'high' : ''}" style="width:${c / max * 100}%"></div></div>
+      <div class="dist-count">${c} 人（${pct(c)}）</div>
+    </div>`;
+  }
+  $('distBars').innerHTML = html;
+}
+
+$('stepSelect').addEventListener('change', () => {
+  $('stepCustom').hidden = $('stepSelect').value !== 'custom';
+  if (!$('stepCustom').hidden) $('stepCustom').focus();
+  updateStats();
+});
+$('stepCustom').addEventListener('input', updateStats);
+$('onlyHigh').addEventListener('change', render);
 
 function render() {
   const kw = $('search').value.trim();
-  const list = students.filter(s => !kw || s.name.includes(kw) || s.grade.includes(kw));
+  const onlyHigh = $('onlyHigh').checked;
+  const list = students.filter(s => (!kw || s.name.includes(kw) || s.grade.includes(kw)) && (!onlyHigh || isHigh(s)));
   const tbody = $('tbody');
 
   if (!list.length) {
@@ -343,7 +438,7 @@ function render() {
   } else {
     tbody.innerHTML = list.map((s, i) => {
       if (s.id === editingId) {
-        return `<tr data-id="${s.id}">
+        return `<tr data-id="${s.id}" class="${isHigh(s) ? 'high' : ''}">
           <td>${i + 1}</td>
           <td><input type="text" class="e-name" value="${esc(s.name)}"></td>
           <td><select class="e-gender">
@@ -361,7 +456,7 @@ function render() {
           </td>
         </tr>`;
       }
-      return `<tr data-id="${s.id}">
+      return `<tr data-id="${s.id}" class="${isHigh(s) ? 'high' : ''}">
         <td>${i + 1}</td>
         <td>${esc(s.name)}</td>
         <td>${esc(s.gender)}</td>
