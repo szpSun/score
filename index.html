@@ -82,7 +82,8 @@
       <button class="gray small" id="btnTemplate">下载导入模板</button>
     </div>
     <div class="tip">
-      表格第一行为表头，需包含「姓名」「性别」「年级」列（列顺序不限）；若没有表头，则按 A 列姓名、B 列性别、C 列年级读取。
+      表格第一行为表头，需包含「姓名」「性别」「年级」列（列顺序不限）；若没有表头，则按 A 列姓名、B 列性别、C 列年级读取。<br>
+      年级填「大一」~「大四」（写成「1」「一年级」等也会自动识别），识别不了的导入后需在表格里手动选择。
     </div>
   </div>
 
@@ -94,7 +95,12 @@
         <option value="男">男</option>
         <option value="女">女</option>
       </select>
-      <input type="text" id="addGrade" placeholder="年级，如：三年级">
+      <select id="addGrade">
+        <option value="大一">大一</option>
+        <option value="大二">大二</option>
+        <option value="大三">大三</option>
+        <option value="大四">大四</option>
+      </select>
       <button id="btnAdd">添加</button>
     </div>
   </div>
@@ -134,7 +140,7 @@
     <div class="tip">
       分数手动填写，输入后自动保存；按回车跳到下一位同学的同一项。<br>
       发球 = 动作 + 落点，高球 = 动作 + 落点（满分各 100）；技能 = 发球 × 50% + 高球 × 50%。<br>
-      50m 填原始成绩（秒），按性别和年级（一二年级 / 三四年级）查评分表得分，慢于 10 分标准记 0 分；年级需写成「一年级」「大二」「3年级」这类形式。<br>
+      50m 填原始成绩（秒），按性别和年级（大一大二 / 大三大四）查评分表得分，慢于 10 分标准记 0 分。<br>
       乐跑填累计里程（公里），按性别查表：男生 60/70/80/90/100 公里、女生 45/55/65/75/85 公里分别得 60/70/80/90/100 分，不足 60 分标准记 0 分。<br>
       平时分直接填百分制分数。<br>
       总分 = 技能 × 50% + 乐跑 × 20% + 50m × 20% + 平时 × 10%（未填的项按 0 分计算）。
@@ -145,7 +151,7 @@
 <script>
 const STORAGE_KEY = 'class_roster';
 let students = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-students.forEach(s => { if (s.scores) { delete s.scores.skill; delete s.scores.m50; delete s.scores.run; } });
+students.forEach(s => { if (s.scores) { delete s.scores.skill; delete s.scores.m50; delete s.scores.run; } s.grade = normalizeGrade(s.grade); });
 let editingId = null;
 
 const $ = id => document.getElementById(id);
@@ -154,6 +160,14 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(students));
+}
+
+const GRADES = ['大一', '大二', '大三', '大四'];
+
+function normalizeGrade(g) {
+  const m = String(g ?? '').match(/[一二三四1-4]/);
+  if (!m) return '';
+  return '大' + '一二三四'['一二三四'.includes(m[0]) ? '一二三四'.indexOf(m[0]) : Number(m[0]) - 1];
 }
 
 function normalizeGender(g) {
@@ -336,7 +350,10 @@ function render() {
             <option ${s.gender === '男' ? 'selected' : ''}>男</option>
             <option ${s.gender === '女' ? 'selected' : ''}>女</option>
           </select></td>
-          <td><input type="text" class="e-grade" value="${esc(s.grade)}"></td>
+          <td><select class="e-grade">
+            ${s.grade ? '' : '<option value="" selected>请选择</option>'}
+            ${GRADES.map(g => `<option ${s.grade === g ? 'selected' : ''}>${g}</option>`).join('')}
+          </select></td>
           ${scoreCells(s)}
           <td class="ops">
             <button class="small green" data-act="save">保存</button>
@@ -348,7 +365,7 @@ function render() {
         <td>${i + 1}</td>
         <td>${esc(s.name)}</td>
         <td>${esc(s.gender)}</td>
-        <td>${esc(s.grade)}</td>
+        <td>${s.grade ? esc(s.grade) : '<span style="color:#e5534b">未选择</span>'}</td>
         ${scoreCells(s)}
         <td class="ops">
           <button class="small" data-act="edit">编辑</button>
@@ -364,7 +381,7 @@ function render() {
 // ---------- 手动添加 ----------
 function addStudent() {
   const name = $('addName').value.trim();
-  const grade = $('addGrade').value.trim();
+  const grade = $('addGrade').value;
   if (!name) { alert('请输入姓名'); $('addName').focus(); return; }
   students.push({ id: uid(), name, gender: $('addGender').value, grade });
   save();
@@ -373,7 +390,7 @@ function addStudent() {
   render();
 }
 $('btnAdd').onclick = addStudent;
-['addName', 'addGrade'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') addStudent(); }));
+['addName'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') addStudent(); }));
 
 // ---------- 表格内编辑 / 删除 ----------
 $('tbody').addEventListener('click', e => {
@@ -397,7 +414,7 @@ $('tbody').addEventListener('click', e => {
       if (!name) { alert('姓名不能为空'); return; }
       s.name = name;
       s.gender = tr.querySelector('.e-gender').value;
-      s.grade = tr.querySelector('.e-grade').value.trim();
+      s.grade = tr.querySelector('.e-grade').value;
       editingId = null;
       save();
       render();
@@ -413,7 +430,7 @@ $('tbody').addEventListener('click', e => {
   }
 });
 $('tbody').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.target.matches('.e-name, .e-grade')) {
+  if (e.key === 'Enter' && e.target.matches('.e-name')) {
     e.target.closest('tr').querySelector('[data-act=save]').click();
   }
   if (e.key === 'Enter' && e.target.matches('input.score')) {
@@ -493,7 +510,7 @@ function importFile(file) {
           id: uid(),
           name: String(r[iName] ?? '').trim(),
           gender: iGender >= 0 ? normalizeGender(r[iGender]) : '',
-          grade: iGrade >= 0 ? String(r[iGrade] ?? '').trim() : '',
+          grade: iGrade >= 0 ? normalizeGrade(r[iGrade]) : '',
         }))
         .filter(s => s.name);
 
@@ -566,7 +583,7 @@ $('btnExport').onclick = () => {
 };
 
 $('btnTemplate').onclick = () => {
-  const ws = XLSX.utils.aoa_to_sheet([['姓名', '性别', '年级'], ['张三', '男', '三年级'], ['李四', '女', '三年级']]);
+  const ws = XLSX.utils.aoa_to_sheet([['姓名', '性别', '年级'], ['张三', '男', '大一'], ['李四', '女', '大三']]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '名单');
   XLSX.writeFile(wb, '名单导入模板.xlsx');
