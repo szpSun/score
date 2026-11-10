@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>班级名单管理</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #f3f5f9; color: #333;
+  }
+  .container { max-width: 960px; margin: 30px auto; padding: 0 16px; }
+  h1 { font-size: 24px; margin: 0 0 20px; }
+  .card {
+    background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .card h2 { font-size: 16px; margin: 0 0 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  input[type=text], select {
+    padding: 7px 10px; border: 1px solid #ccd; border-radius: 6px; font-size: 14px;
+  }
+  input[type=text]:focus, select:focus { outline: none; border-color: #4a7cf7; }
+  button {
+    padding: 7px 14px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer;
+    background: #4a7cf7; color: #fff;
+  }
+  button:hover { opacity: .88; }
+  button.gray { background: #e6e8ee; color: #333; }
+  button.red { background: #e5534b; }
+  button.green { background: #2da44e; }
+  button.small { padding: 4px 10px; font-size: 13px; }
+  .tip { font-size: 13px; color: #888; margin-top: 8px; line-height: 1.6; }
+  .drop {
+    border: 2px dashed #b8c4e0; border-radius: 8px; padding: 22px; text-align: center;
+    color: #667; cursor: pointer; transition: .2s;
+  }
+  .drop.over { background: #eef3ff; border-color: #4a7cf7; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 9px 10px; border-bottom: 1px solid #eee; text-align: left; }
+  th { background: #f7f8fb; font-weight: 600; }
+  tr:hover td { background: #fafbff; }
+  td input[type=text], td select { width: 100%; padding: 5px 8px; }
+  .stats { font-size: 14px; color: #555; }
+  .stats b { color: #4a7cf7; }
+  .empty { text-align: center; color: #aaa; padding: 30px 0; }
+  .ops { white-space: nowrap; }
+  .ops button { margin-right: 4px; }
+  .toolbar { justify-content: space-between; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📋 班级名单管理</h1>
+
+  <div class="card">
+    <h2>从 Excel 导入</h2>
+    <div class="drop" id="drop">点击选择或拖拽 Excel / CSV 文件到这里</div>
+    <input type="file" id="file" accept=".xlsx,.xls,.csv" hidden>
+    <div class="row" style="margin-top:10px">
+      <label><input type="radio" name="mode" value="append" checked> 追加到现有名单</label>
+      <label><input type="radio" name="mode" value="replace"> 覆盖现有名单</label>
+      <button class="gray small" id="btnTemplate">下载导入模板</button>
+    </div>
+    <div class="tip">
+      表格第一行为表头，需包含「姓名」「性别」「年级」列（列顺序不限）；若没有表头，则按 A 列姓名、B 列性别、C 列年级读取。
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>手动添加</h2>
+    <div class="row">
+      <input type="text" id="addName" placeholder="姓名">
+      <select id="addGender">
+        <option value="男">男</option>
+        <option value="女">女</option>
+      </select>
+      <input type="text" id="addGrade" placeholder="年级，如：三年级">
+      <button id="btnAdd">添加</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row toolbar">
+      <div class="stats" id="stats"></div>
+      <div class="row">
+        <input type="text" id="search" placeholder="搜索姓名 / 年级">
+        <button class="green" id="btnExport">导出 Excel</button>
+        <button class="red" id="btnClear">清空</button>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr><th style="width:60px">序号</th><th>姓名</th><th style="width:100px">性别</th><th>年级</th><th style="width:150px">操作</th></tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'class_roster';
+let students = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+let editingId = null;
+
+const $ = id => document.getElementById(id);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(students));
+}
+
+function normalizeGender(g) {
+  g = String(g ?? '').trim();
+  if (/^(男|m|male|1)$/i.test(g)) return '男';
+  if (/^(女|f|female|0|2)$/i.test(g)) return '女';
+  return g;
+}
+
+function render() {
+  const kw = $('search').value.trim();
+  const list = students.filter(s => !kw || s.name.includes(kw) || s.grade.includes(kw));
+  const tbody = $('tbody');
+
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">${students.length ? '没有匹配的学生' : '暂无学生，请导入或手动添加'}</td></tr>`;
+  } else {
+    tbody.innerHTML = list.map((s, i) => {
+      if (s.id === editingId) {
+        return `<tr data-id="${s.id}">
+          <td>${i + 1}</td>
+          <td><input type="text" class="e-name" value="${esc(s.name)}"></td>
+          <td><select class="e-gender">
+            <option ${s.gender === '男' ? 'selected' : ''}>男</option>
+            <option ${s.gender === '女' ? 'selected' : ''}>女</option>
+          </select></td>
+          <td><input type="text" class="e-grade" value="${esc(s.grade)}"></td>
+          <td class="ops">
+            <button class="small green" data-act="save">保存</button>
+            <button class="small gray" data-act="cancel">取消</button>
+          </td>
+        </tr>`;
+      }
+      return `<tr data-id="${s.id}">
+        <td>${i + 1}</td>
+        <td>${esc(s.name)}</td>
+        <td>${esc(s.gender)}</td>
+        <td>${esc(s.grade)}</td>
+        <td class="ops">
+          <button class="small" data-act="edit">编辑</button>
+          <button class="small red" data-act="del">删除</button>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  const male = students.filter(s => s.gender === '男').length;
+  const female = students.filter(s => s.gender === '女').length;
+  $('stats').innerHTML = `共 <b>${students.length}</b> 人，男 <b>${male}</b> 人，女 <b>${female}</b> 人`;
+}
+
+// ---------- 手动添加 ----------
+function addStudent() {
+  const name = $('addName').value.trim();
+  const grade = $('addGrade').value.trim();
+  if (!name) { alert('请输入姓名'); $('addName').focus(); return; }
+  students.push({ id: uid(), name, gender: $('addGender').value, grade });
+  save();
+  $('addName').value = '';
+  $('addName').focus();
+  render();
+}
+$('btnAdd').onclick = addStudent;
+['addName', 'addGrade'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') addStudent(); }));
+
+// ---------- 表格内编辑 / 删除 ----------
+$('tbody').addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const tr = btn.closest('tr');
+  const id = tr.dataset.id;
+  const s = students.find(x => x.id === id);
+
+  switch (btn.dataset.act) {
+    case 'edit':
+      editingId = id;
+      render();
+      break;
+    case 'cancel':
+      editingId = null;
+      render();
+      break;
+    case 'save': {
+      const name = tr.querySelector('.e-name').value.trim();
+      if (!name) { alert('姓名不能为空'); return; }
+      s.name = name;
+      s.gender = tr.querySelector('.e-gender').value;
+      s.grade = tr.querySelector('.e-grade').value.trim();
+      editingId = null;
+      save();
+      render();
+      break;
+    }
+    case 'del':
+      if (confirm(`确定删除「${s.name}」吗？`)) {
+        students = students.filter(x => x.id !== id);
+        save();
+        render();
+      }
+      break;
+  }
+});
+$('tbody').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.matches('.e-name, .e-grade')) {
+    e.target.closest('tr').querySelector('[data-act=save]').click();
+  }
+});
+
+$('search').addEventListener('input', render);
+
+$('btnClear').onclick = () => {
+  if (students.length && confirm('确定清空全部名单吗？此操作不可恢复。')) {
+    students = [];
+    save();
+    render();
+  }
+};
+
+// ---------- Excel 导入 ----------
+function findCol(header, keys) {
+  return header.findIndex(h => keys.some(k => String(h ?? '').trim().toLowerCase().includes(k)));
+}
+
+function importFile(file) {
+  if (typeof XLSX === 'undefined') { alert('Excel 解析库加载失败，请检查网络后刷新页面'); return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+        .filter(r => r.some(c => String(c).trim() !== ''));
+      if (!rows.length) { alert('表格中没有数据'); return; }
+
+      let iName = findCol(rows[0], ['姓名', '名字', 'name']);
+      let iGender = findCol(rows[0], ['性别', 'gender', 'sex']);
+      let iGrade = findCol(rows[0], ['年级', '班级', 'grade']);
+      let dataRows = rows;
+      if (iName >= 0) {
+        dataRows = rows.slice(1);
+      } else {
+        iName = 0; iGender = 1; iGrade = 2;
+      }
+
+      const imported = dataRows
+        .map(r => ({
+          id: uid(),
+          name: String(r[iName] ?? '').trim(),
+          gender: iGender >= 0 ? normalizeGender(r[iGender]) : '',
+          grade: iGrade >= 0 ? String(r[iGrade] ?? '').trim() : '',
+        }))
+        .filter(s => s.name);
+
+      if (!imported.length) { alert('没有读取到有效的学生数据'); return; }
+
+      const mode = document.querySelector('input[name=mode]:checked').value;
+      if (mode === 'replace') {
+        if (students.length && !confirm(`将用 ${imported.length} 条新数据覆盖现有 ${students.length} 条，确定吗？`)) return;
+        students = imported;
+      } else {
+        students = students.concat(imported);
+      }
+      editingId = null;
+      save();
+      render();
+      alert(`成功导入 ${imported.length} 名学生`);
+    } catch (err) {
+      alert('文件解析失败：' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+const drop = $('drop');
+drop.onclick = () => $('file').click();
+$('file').onchange = e => {
+  if (e.target.files[0]) importFile(e.target.files[0]);
+  e.target.value = '';
+};
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => {
+  e.preventDefault();
+  drop.classList.remove('over');
+  if (e.dataTransfer.files[0]) importFile(e.dataTransfer.files[0]);
+});
+
+// ---------- 导出 ----------
+function downloadSheet(aoa, filename) {
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 8 }, { wch: 14 }, { wch: 8 }, { wch: 14 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '名单');
+  XLSX.writeFile(wb, filename);
+}
+
+$('btnExport').onclick = () => {
+  if (!students.length) { alert('名单为空'); return; }
+  downloadSheet(
+    [['序号', '姓名', '性别', '年级'], ...students.map((s, i) => [i + 1, s.name, s.gender, s.grade])],
+    '班级名单.xlsx'
+  );
+};
+
+$('btnTemplate').onclick = () => {
+  const ws = XLSX.utils.aoa_to_sheet([['姓名', '性别', '年级'], ['张三', '男', '三年级'], ['李四', '女', '三年级']]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '名单');
+  XLSX.writeFile(wb, '名单导入模板.xlsx');
+};
+
+render();
+</script>
+</body>
+</html>
